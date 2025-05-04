@@ -3,8 +3,7 @@ referensi: https://github.com/axeltanjung/decision_tree_from_scratch/blob/main/m
 """
 
 import numpy as np
-from jupyter_core.version import parts
-from xlrd.biffh import XL_RIGHTMARGIN
+import collections
 
 import CRITERIA as cr
 
@@ -47,11 +46,36 @@ class Node:
         self.leaf = leaf
         self.left = left
         self.right = right
-        
+
     def show_node_prop(self):
-        print(f'{self.feature} = {self.threshold}\n'
-              f'{self.impurity}\n'
-              f'values = {self.values}')
+        print(f"Feature = {self.feature}")
+        print(f"Threshold = {self.threshold}")
+        print(f"Impurity = {self.impurity}")
+
+        # Ringkas values (misal hitung distribusi kelas jika values berupa array)
+        if self.values is not None:
+            try:
+                counter = collections.Counter(self.values)
+                print(f"Class distribution = {dict(counter)}")
+            except Exception:
+                print(f"Values = {self.values}")
+        else:
+            print("Values = None")
+
+        print(f"Samples = {self.samples}")
+        print(f"Leaf = {self.leaf}")
+
+        if self.left is not None:
+            print(f"Left child: Feature = {self.left.feature}, Threshold = {self.left.threshold}")
+        else:
+            print("Left child: None")
+
+        if self.right is not None:
+            print(f"Right child: Feature = {self.right.feature}, Threshold = {self.right.threshold}")
+        else:
+            print("Right child: None")
+
+        print()
 
 def _split(data):
     """
@@ -104,15 +128,32 @@ class DecisionTreeBase:
         self.n_samples = None
         self.tree_ = None
 
+    def print_tree(self, node=None, depth=0):
+        if node is None:
+            if depth == 0:
+                print("The tree is empty, ensure the tree is properly trained using the fit method")
+                return
+            return
+
+        indent = "  " * depth
+        if node.leaf is not None:
+            print(f"{indent}Leaf: Predict = {node.leaf}, Samples = {node.samples}")
+        else:
+            print(
+                f"{indent}Node: Feature = {node.feature}, Threshold = {node.threshold:.4f}, Impurity = {node.impurity:.4f}, Samples = {node.samples}")
+            print(f"{indent}Left:")
+            self.print_tree(node.left, depth + 1)
+            print(f"{indent}Right:")
+            self.print_tree(node.right, depth + 1)
+
     def fit(self, X, y):
         cx = np.array(X).copy()
         cy = np.array(y).copy()
         self.n_samples, self.n_feature = X.shape
-        self.columns = X.columns
-        self._grow_tree(cx, cy)
+        self.columns = X.columns if hasattr(X, 'columns') else [str(i) for i in range(self.n_feature)]
+        self.tree_ = self._grow_tree(cx, cy)
 
-
-    def _grow_tree(self, X, y):
+    def _grow_tree(self, X, y, depth = 0):
         """
             langkah buat bentuk pohon:
             1. bikin fungsi buat misahin antar kolom dan nanti tiap kolom digabungin sama target (namanya xy)
@@ -123,20 +164,51 @@ class DecisionTreeBase:
             4. hitung impurity dari kolom saat ini menggunakan threshold yang telah terbentuk sebelumnya dari kolom tersebut.
             5. setelah dapet semua impurity, ambil nilai impurity yang paling rendah sebagai node paling awal / root.
         """
+
+        n_samples, n_features = X.shape
+        n_labels = len(np.unique(y))
+
+        if (self.max_depth is not None) and (depth >= self.max_depth) or n_samples < self.min_samples_split or n_labels == 1:
+            leaf_value = count_majority_val(y)
+            return Node(leaf=leaf_value, samples=n_samples, values=np.bincount(y) if y.dtype.kind in 'iu' else y)
+
         th_dict = self._part(X, y)
 
-        # for i in sorted(th_dict, key=lambda x: th_dict[x][2]):
-        #     print(f"feature: {th_dict[i][0]}, threshold: {th_dict[i][1]}, impurity: {th_dict[i][2]}")
+        if not th_dict:
+            leaf_value = count_majority_val(y)
+            return Node(leaf=leaf_value, samples=n_samples, values=np.bincount(y) if y.dtype.kind in 'iu' else y)
 
-        # for i in th_dict:
-        #     print(f"feature: {th_dict[i][0]}, threshold: {th_dict[i][1]}, impurity: {th_dict[i][2]}")
-        
-        sort_th_dict = sorted(th_dict, key=lambda x: th_dict[x][2])
-        first_val = th_dict[sort_th_dict[0]]
-        print(sort_th_dict[0])
-        print(first_val)
+        sorted_dict = sorted(th_dict, key=lambda x: th_dict[x][2])
+        feature, threshold, impurity = th_dict[sorted_dict[0]]
+        feature_index = list(self.columns).index(feature)
 
-        # bikin root node dari first_val
+        left_idx = X[:, feature_index] <= threshold
+        right_idx = X[:, feature_index] > threshold
+        X_left, y_left = X[left_idx], y[left_idx]
+        X_right, y_right = X[right_idx], y[right_idx]
+
+        # menghandle kalau cabang kiri dan kanan kososng
+        if len(y_left) == 0 or len(y_right) == 0:
+            leaf_value = count_majority_val(y)
+            node = Node(leaf = leaf_value, samples = n_samples, values = np.bincount(y) if y.dtype.kind in 'iu' else y)
+            node.show_node_prop()
+            return node
+
+        # ngecek jumlah minimal sampel setiap cabang
+        if len(y_left) < self.min_samples_leaf or len(y_right) < self.min_samples_leaf:
+            leaf_value = count_majority_val(y)
+            node = Node(leaf=leaf_value, samples=n_samples, values=np.bincount(y) if y.dtype.kind in 'iu' else y)
+            node.show_node_prop()
+            return node
+
+        node = Node(feature=feature, threshold=threshold, impurity=impurity, samples=n_samples,
+                    values=np.bincount(y) if y.dtype.kind in 'iu' else y)
+
+        node.left = self._grow_tree(X_left, y_left, depth + 1)
+        node.right = self._grow_tree(X_right, y_right, depth + 1)
+        node.leaf = False
+        node.show_node_prop()
+        return node
 
     def _part(self, X, y):
         """
@@ -147,10 +219,9 @@ class DecisionTreeBase:
         """
         thresh_dict = dict()
         feature = self.columns
-        iter = 0
 
         # menghitung weighted average of gini impurity dari threshold yang dihasilkan oleh kolom
-        for i in range(len(feature) - 1):
+        for i in range(len(feature)):
             X_iny = np.column_stack((X[:, i], y))
             sortX = np.argsort(X_iny[:, 0])
             X_iny = X_iny[sortX]
@@ -170,11 +241,18 @@ class DecisionTreeBase:
                 wagi = self._weighted_average_gini_impurity(left, right)
                 thresh_dict[iter] = [feature[i], th_i, wagi]
                 # print([feature[i], th_i, wagi])
-                iter += 1
             # print("\n")
         
         return thresh_dict
 
+    # def _best_split(self, thresh_dict):
+    #     if not thresh_dict:
+    #         return None
+    #
+    #     sorted_dict = sorted(thresh_dict.items(), key=lambda x: x[0][1][2])
+    #     best_feature, best_key, best_val = sorted_dict[0]
+    #     return best_feature, best_key, best_val
+    #
     def _gini_impurity(self, y):
         if len(y) == 0:
             return 0
@@ -213,7 +291,7 @@ if __name__ == "__main__":
     
     df = pd.read_csv('dolan.csv')
     df = df.drop(['Unnamed: 0'], axis=1)
-    print(df)
 
-    dt = DecisionTreeBase(max_depth=3, min_samples_split=2, min_samples_leaf=1)
-    dt.fit(df.drop(['Play'], axis=1), df['Play'])
+    dt = DecisionTreeBase(max_depth = None, min_samples_split=2, min_samples_leaf=1)
+    X_train, y_train = df.iloc[:13, :-1], df.iloc[:13, -1]
+    dt.fit(X_train, y_train)

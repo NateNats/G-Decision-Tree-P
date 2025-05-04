@@ -548,3 +548,14 @@ class DecisionTreeRegressor(DecisionTreeBase):
         self._calc_leaf_val = _calculate_average_vote
 
         super(DecisionTreeRegressor, self).fit(X, y)
+
+if __name__ == "__main__":
+    import pandas as pd
+
+    df = pd.read_csv('dolan.csv')
+    df = df.drop(['Unnamed: 0'], axis=1)
+    print(df)
+
+    dt = DecisionTreeBase(max_depth=3, criteria="gini", impurity_reduction_min=0.0, sample_split_min=2, sample_leaf_min=1, alpa=0.0)
+    X_train, y_train = df.iloc[:13, :-1], df.iloc[:13, -1]
+    dt.fit(X_train, y_train)
